@@ -1,0 +1,80 @@
+name: cdk-build-test-deploy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - aws-cdk/**
+      - .github/workflows/ci-cdk.yml
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - aws-cdk/**
+      - .github/workflows/ci-cdk.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# 同じブランチで同一のワークフローが新たに開始された場合、実行中の古いワークフローをキャンセルする
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SESSION_NAME: ${{ github.event.repository.name }}-${{ github.workflow }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        id: setup_node
+        with:
+          node-version: "22"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          # CloudTrail でどの GitHub Actions からのリクエストか確認できるようにする
+          role-session-name: ${{ env.SESSION_NAME }}
+
+      # キャッシュが存在する場合、キャッシュから node_modules をリストアする
+      - name: Cache node modules
+        id: cache-node-modules-id
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: "**/node_modules"
+          # 異なる環境で実行されることによるファイルの不整合を防ぐため、キャッシュキーにランナーのアーキテクチャ、OS、Node.jsのバージョン、パッケージマネージャーの種別、キャッシュ名、package-lock.json のハッシュを含める
+          key: ${{ runner.arch }}-${{ runner.os }}-node-${{ steps.setup_node.outputs.node-version }}-npm-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+
+      # キャッシュが存在しない場合のみ依存関係をインストール
+      - if: ${{ steps.cache-node-modules-id.outputs.cache-hit != 'true' }}
+        name: Install Dependencies
+        run: npm ci
+
+      - name: Typecheck
+        if: contains(github.event_name, 'pull_request')
+        run: npm run typecheck
+
+      - name: Unit tests
+        if: contains(github.event_name, 'pull_request')
+        run: npm run test
+
+      - name: CDK Diff Check
+        if: contains(github.event_name, 'pull_request')
+        run: npm run diff
+
+      - name: CDK Deploy
+        if: contains(github.event_name, 'push')
+        run: npm run deploy
