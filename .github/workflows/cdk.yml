@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend
+        working-directory: aws-cdk
     env:
       SESSION_NAME: ${{ github.event.repository.name }}-${{ github.workflow }}-${{ github.run_id }}-${{ github.run_attempt }}
 
