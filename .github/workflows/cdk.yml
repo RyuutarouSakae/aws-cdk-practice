@@ -17,6 +17,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
 
 # 同じブランチで同一のワークフローが新たに開始された場合、実行中の古いワークフローをキャンセルする
 concurrency:
@@ -73,8 +74,15 @@ jobs:
 
       - name: CDK Diff Check
         if: contains(github.event_name, 'pull_request')
-        run: npm run diff
+        run: npm run diff > diff_output.txt 2>&1 || true
 
+      - name: Comment PR with CDK Diff
+        if: contains(github.event_name, 'pull_request')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/actions/update-pr-with-cdk-diff.js');
+            await script({ github, context, core });
       - name: CDK Deploy
         if: contains(github.event_name, 'push')
         run: npm run deploy
